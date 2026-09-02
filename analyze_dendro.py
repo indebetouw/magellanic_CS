@@ -389,7 +389,7 @@ def main():
         pl.ylabel('Other lines pk from mom')
         pl.yscale('log')
         pl.xlim(xx)
-        pl.savefig(os.path.join(plot_dir, cloud + f"_pk_different_lines_{select_good_method}.png"))
+        pl.savefig(os.path.join("./", cloud + f"_pk_different_lines_{select_good_method}.png"))
 
         pl.clf()
         xx = None
@@ -517,7 +517,7 @@ def main():
         pl.grid(alpha=0.2)
         pl.legend(prop={"size": 8}, loc="best")
         pl.tight_layout()
-        pl.savefig(os.path.join(plot_dir, f"{corr_line}_correlation_histograms_{select_good_method}.png"))
+        pl.savefig(os.path.join("./", f"{corr_line}_correlation_histograms_{select_good_method}.png"))
 
     regression_table.write(regression_file, format="ascii.ecsv", overwrite=True)
 
