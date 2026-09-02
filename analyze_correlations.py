@@ -2,6 +2,7 @@
 
 from argparse import ArgumentParser
 from glob import glob
+from pathlib import Path
 
 from astropy.io import fits
 from matplotlib.colors import LogNorm
@@ -13,6 +14,7 @@ PRODUCT_DIRECTORY = "../products_1pc"
 DEFAULT_CLOUD = "A439"
 key_line = "13CO10"
 other_line = "C18O10"
+OUTPUT_DIRECTORY = "analyze_correlation"
 MINIMUM_THRESHOLD_VOXELS = 1000
 LOW_BRIGHTNESS_THRESHOLD = 0.1
 LOW_BRIGHTNESS_BIN_COUNT = 15
@@ -25,6 +27,11 @@ def find_cube(cloud, line):
     if len(paths) != 1:
         raise RuntimeError(f"Expected one cube matching {pattern}, found {paths}")
     return paths[0]
+
+
+def find_clouds():
+    pattern = f"{PRODUCT_DIRECTORY}/*_{key_line}_*4asec_grid_K.fits"
+    return sorted({Path(path).name.split("_", 1)[0] for path in glob(pattern)})
 
 
 def cumulative_means(key_line_values, other_line_values, bins):
@@ -168,6 +175,7 @@ def plot_cumulative_means(
     inset_axis.set_xticks([])
     inset_axis.set_yticks([])
     figure.savefig(output, dpi=200)
+    pl.close(figure)
     print(f"Saved {output} using {bins} linearly spaced {key_line} thresholds")
 
 
@@ -239,6 +247,7 @@ def plot_differential_means(
     inset_axis.set_xticks([])
     inset_axis.set_yticks([])
     figure.savefig(output, dpi=200)
+    pl.close(figure)
     print(
         f"Saved {output} using {LOW_BRIGHTNESS_BIN_COUNT} linear intervals below "
         f"approximately {LOW_BRIGHTNESS_THRESHOLD} K and "
@@ -246,47 +255,13 @@ def plot_differential_means(
     )
 
 
-def main():
-    parser = ArgumentParser(description=__doc__)
-    parser.add_argument("--cloud", default=DEFAULT_CLOUD, help="Cloud identifier")
-    parser.add_argument("--bins", type=int, default=300, help="Number of bins per axis")
-    parser.add_argument("--output", help="Output PNG filename")
-    parser.add_argument(
-        "--threshold-bins",
-        type=int,
-        default=40,
-        help=f"Number of linearly spaced {key_line} thresholds for cumulative means",
-    )
-    parser.add_argument(
-        "--cumulative-output",
-        help="Output PNG filename for cumulative means",
-    )
-    parser.add_argument(
-        "--differential-output",
-        help="Output PNG filename for differential means",
-    )
-    parser.add_argument(
-        "--shuffle-seed",
-        type=int,
-        default=12345,
-        help=f"Random seed for the {other_line} channel permutation",
-    )
-    parser.add_argument(
-        "--shuffle-realizations",
-        type=int,
-        default=100,
-        help=f"Number of shuffled {other_line} channel realizations",
-    )
-    args = parser.parse_args()
-    if args.output is None:
-        args.output = f"{args.cloud}_{key_line}_vs_{other_line}_pixel_distribution.png"
-    if args.cumulative_output is None:
-        args.cumulative_output = f"{args.cloud}_{key_line}_vs_{other_line}_cumulative_means.png"
-    if args.differential_output is None:
-        args.differential_output = f"{args.cloud}_{key_line}_vs_{other_line}_differential_means.png"
+def analyze_cloud(cloud, args, output_directory):
+    output = output_directory / f"{cloud}_{key_line}_vs_{other_line}_pixel_distribution.png"
+    cumulative_output = output_directory / f"{cloud}_{key_line}_vs_{other_line}_cumulative_means.png"
+    differential_output = output_directory / f"{cloud}_{key_line}_vs_{other_line}_differential_means.png"
 
-    key_line_file = find_cube(args.cloud, key_line)
-    other_line_file = find_cube(args.cloud, other_line)
+    key_line_file = find_cube(cloud, key_line)
+    other_line_file = find_cube(cloud, other_line)
     key_line_data = fits.getdata(key_line_file, memmap=True)
     other_line_data = fits.getdata(other_line_file, memmap=True)
     other_line_header = fits.getheader(other_line_file)
@@ -349,11 +324,12 @@ def main():
     colorbar.set_label("Number of voxels")
     axis.set_xlabel(f"{key_line} brightness temperature (K)")
     axis.set_ylabel(f"{other_line} brightness temperature (K)")
-    axis.set_title(f"{args.cloud} voxel distribution (N = {len(key_line_values):,})")
-    figure.savefig(args.output, dpi=200)
-    print(f"Saved {args.output} from {len(key_line_values):,} finite voxel pairs")
+    axis.set_title(f"{cloud} voxel distribution (N = {len(key_line_values):,})")
+    figure.savefig(output, dpi=200)
+    pl.close(figure)
+    print(f"Saved {output} from {len(key_line_values):,} finite voxel pairs")
     plot_cumulative_means(
-        args.cloud,
+        cloud,
         key_line_values,
         other_line_values,
         shuffled_other_line_values,
@@ -361,10 +337,10 @@ def main():
         other_line_rms,
         pixels_per_beam,
         args.threshold_bins,
-        args.cumulative_output,
+        cumulative_output,
     )
     plot_differential_means(
-        args.cloud,
+        cloud,
         key_line_values,
         other_line_values,
         shuffled_other_line_values,
@@ -372,8 +348,44 @@ def main():
         other_line_rms,
         pixels_per_beam,
         args.threshold_bins,
-        args.differential_output,
+        differential_output,
     )
+
+
+def main():
+    parser = ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--cloud",
+        action="append",
+        help="Cloud identifier to analyze; repeat to select multiple clouds",
+    )
+    parser.add_argument("--bins", type=int, default=300, help="Number of bins per axis")
+    parser.add_argument(
+        "--threshold-bins",
+        type=int,
+        default=40,
+        help=f"Number of linearly spaced {key_line} thresholds for cumulative means",
+    )
+    parser.add_argument(
+        "--shuffle-seed",
+        type=int,
+        default=12345,
+        help=f"Random seed for the {other_line} channel permutation",
+    )
+    parser.add_argument(
+        "--shuffle-realizations",
+        type=int,
+        default=100,
+        help=f"Number of shuffled {other_line} channel realizations",
+    )
+    args = parser.parse_args()
+    output_directory = Path(OUTPUT_DIRECTORY)
+    output_directory.mkdir(exist_ok=True)
+    clouds = args.cloud or find_clouds()
+    if not clouds:
+        raise RuntimeError(f"No {key_line} cubes found in {PRODUCT_DIRECTORY}")
+    for cloud in clouds:
+        analyze_cloud(cloud, args, output_directory)
 
 
 if __name__ == "__main__":
