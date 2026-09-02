@@ -402,13 +402,18 @@ def analyze_cloud(cloud, args, output_directory):
     highest_differential_bin_mask = good & (key_line_data >= differential_thresholds[-1])
     highest_differential_bin_image = np.sum(highest_differential_bin_mask, axis=0)
 
+    channel_indices, y_indices, x_indices = np.nonzero(good)
     random_generator = np.random.default_rng(args.shuffle_seed)
     shuffled_other_line_values = []
     for realization in range(args.shuffle_realizations):
-        shuffled_other_line = other_line_data[
-            random_generator.permutation(other_line_data.shape[0])
+        shuffled_channel_indices = random_generator.permutation(
+            other_line_data.shape[0]
+        )
+        shuffled_values = other_line_data[
+            shuffled_channel_indices[channel_indices],
+            y_indices,
+            x_indices,
         ]
-        shuffled_values = shuffled_other_line[good]
         if not np.all(np.isfinite(shuffled_values)):
             raise RuntimeError(
                 f"Shuffled {other_line} realization {realization + 1} has non-finite selected pixels"
