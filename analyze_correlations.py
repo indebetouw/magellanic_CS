@@ -1,4 +1,4 @@
-"""Plot voxel-by-voxel 13CO(1-0) and C18O(1-0) distributions for one cloud."""
+"""Plot voxel-by-voxel distributions for two spectral-line cubes in one cloud."""
 
 from argparse import ArgumentParser
 from glob import glob
@@ -11,6 +11,8 @@ import numpy as np
 
 PRODUCT_DIRECTORY = "../products_1pc"
 DEFAULT_CLOUD = "A439"
+key_line = "13CO10"
+other_line = "C18O10"
 MINIMUM_THRESHOLD_VOXELS = 1000
 LOW_BRIGHTNESS_THRESHOLD = 0.1
 LOW_BRIGHTNESS_BIN_COUNT = 15
@@ -25,45 +27,45 @@ def find_cube(cloud, line):
     return paths[0]
 
 
-def cumulative_means(co13_values, c18o_values, bins):
-    positive = co13_values > 0
-    co13_values = co13_values[positive]
-    c18o_values = c18o_values[positive]
-    if len(co13_values) == 0:
-        raise RuntimeError("No positive 13CO voxel values found")
+def cumulative_means(key_line_values, other_line_values, bins):
+    positive = key_line_values > 0
+    key_line_values = key_line_values[positive]
+    other_line_values = other_line_values[positive]
+    if len(key_line_values) == 0:
+        raise RuntimeError(f"No positive {key_line} voxel values found")
 
-    order = np.argsort(co13_values)
-    co13_sorted = co13_values[order]
-    c18o_sorted = c18o_values[order]
-    maximum_threshold = co13_sorted[-min(MINIMUM_THRESHOLD_VOXELS, len(co13_sorted))]
-    thresholds = np.linspace(np.min(co13_sorted), maximum_threshold, bins)
-    co13_sums = np.concatenate(([0.0], np.cumsum(co13_sorted[::-1])))
-    c18o_sums = np.concatenate(([0.0], np.cumsum(c18o_sorted[::-1])))
-    first_indices = np.searchsorted(co13_sorted, thresholds, side="left")
-    counts = len(co13_sorted) - first_indices
-    mean_co13 = co13_sums[counts] / counts
-    mean_c18o = c18o_sums[counts] / counts
-    return mean_co13, mean_c18o, counts, thresholds
+    order = np.argsort(key_line_values)
+    key_line_sorted = key_line_values[order]
+    other_line_sorted = other_line_values[order]
+    maximum_threshold = key_line_sorted[-min(MINIMUM_THRESHOLD_VOXELS, len(key_line_sorted))]
+    thresholds = np.linspace(np.min(key_line_sorted), maximum_threshold, bins)
+    key_line_sums = np.concatenate(([0.0], np.cumsum(key_line_sorted[::-1])))
+    other_line_sums = np.concatenate(([0.0], np.cumsum(other_line_sorted[::-1])))
+    first_indices = np.searchsorted(key_line_sorted, thresholds, side="left")
+    counts = len(key_line_sorted) - first_indices
+    mean_key_line = key_line_sums[counts] / counts
+    mean_other_line = other_line_sums[counts] / counts
+    return mean_key_line, mean_other_line, counts, thresholds
 
 
-def differential_means(co13_values, c18o_values, bins):
-    positive = co13_values > 0
-    co13_values = co13_values[positive]
-    c18o_values = c18o_values[positive]
-    if len(co13_values) == 0:
-        raise RuntimeError("No positive 13CO voxel values found")
+def differential_means(key_line_values, other_line_values, bins):
+    positive = key_line_values > 0
+    key_line_values = key_line_values[positive]
+    other_line_values = other_line_values[positive]
+    if len(key_line_values) == 0:
+        raise RuntimeError(f"No positive {key_line} voxel values found")
 
-    order = np.argsort(co13_values)
-    co13_sorted = co13_values[order]
-    c18o_sorted = c18o_values[order]
+    order = np.argsort(key_line_values)
+    key_line_sorted = key_line_values[order]
+    other_line_sorted = other_line_values[order]
     low_brightness_end = np.searchsorted(
-        co13_sorted,
+        key_line_sorted,
         LOW_BRIGHTNESS_THRESHOLD,
         side="left",
     )
-    high_brightness_count = len(co13_sorted) - low_brightness_end
+    high_brightness_count = len(key_line_sorted) - low_brightness_end
     full_high_brightness_bins = high_brightness_count // HIGH_BRIGHTNESS_VOXELS_PER_BIN
-    high_brightness_start = len(co13_sorted) - (
+    high_brightness_start = len(key_line_sorted) - (
         full_high_brightness_bins * HIGH_BRIGHTNESS_VOXELS_PER_BIN
     )
     low_brightness_edges = np.linspace(
@@ -74,7 +76,7 @@ def differential_means(co13_values, c18o_values, bins):
     )
     high_brightness_edges = np.arange(
         high_brightness_start,
-        len(co13_sorted) + 1,
+        len(key_line_sorted) + 1,
         HIGH_BRIGHTNESS_VOXELS_PER_BIN,
         dtype=int,
     )
@@ -84,77 +86,77 @@ def differential_means(co13_values, c18o_values, bins):
     first_indices = bin_edges[:-1]
     last_indices = bin_edges[1:]
     counts = last_indices - first_indices
-    co13_sums = np.concatenate(([0.0], np.cumsum(co13_sorted)))
-    c18o_sums = np.concatenate(([0.0], np.cumsum(c18o_sorted)))
-    mean_co13 = (co13_sums[last_indices] - co13_sums[first_indices]) / counts
-    mean_c18o = (c18o_sums[last_indices] - c18o_sums[first_indices]) / counts
-    thresholds = co13_sorted[first_indices]
-    return mean_co13, mean_c18o, counts, thresholds
+    key_line_sums = np.concatenate(([0.0], np.cumsum(key_line_sorted)))
+    other_line_sums = np.concatenate(([0.0], np.cumsum(other_line_sorted)))
+    mean_key_line = (key_line_sums[last_indices] - key_line_sums[first_indices]) / counts
+    mean_other_line = (other_line_sums[last_indices] - other_line_sums[first_indices]) / counts
+    thresholds = key_line_sorted[first_indices]
+    return mean_key_line, mean_other_line, counts, thresholds
 
 
-def noise_per_selected_voxel(c18o_rms, counts, pixels_per_beam):
-    return c18o_rms / np.sqrt(counts / pixels_per_beam)
+def noise_per_selected_voxel(other_line_rms, counts, pixels_per_beam):
+    return other_line_rms / np.sqrt(counts / pixels_per_beam)
 
 
 def plot_cumulative_means(
     cloud,
-    co13_values,
-    c18o_values,
-    shuffled_c18o_values,
+    key_line_values,
+    other_line_values,
+    shuffled_other_line_values,
     highest_bin_image,
-    c18o_rms,
+    other_line_rms,
     pixels_per_beam,
     bins,
     output,
 ):
-    mean_co13, mean_c18o, counts, _ = cumulative_means(
-        co13_values,
-        c18o_values,
+    mean_key_line, mean_other_line, counts, _ = cumulative_means(
+        key_line_values,
+        other_line_values,
         bins,
     )
 
     figure, axis = pl.subplots(figsize=(7, 6), constrained_layout=True)
-    axis.plot(mean_co13, mean_c18o, ".-", markersize=4, label="Aligned C$^{18}$O")
-    for index in range(len(mean_co13) - 5, len(mean_co13)):
+    axis.plot(mean_key_line, mean_other_line, ".-", markersize=4, label=f"Aligned {other_line}")
+    for index in range(len(mean_key_line) - 5, len(mean_key_line)):
         axis.annotate(
             f"{counts[index]:,}",
-            (mean_co13[index], mean_c18o[index]),
+            (mean_key_line[index], mean_other_line[index]),
             xytext=(5, 5),
             textcoords="offset points",
             fontsize=8,
         )
-    shuffled_c18o_means = []
-    for shuffled_values in shuffled_c18o_values:
-        shuffled_mean_co13, shuffled_mean_c18o, _, _ = cumulative_means(
-            co13_values,
+    shuffled_other_line_means = []
+    for shuffled_values in shuffled_other_line_values:
+        shuffled_mean_key_line, shuffled_mean_other_line, _, _ = cumulative_means(
+            key_line_values,
             shuffled_values,
             bins,
         )
-        shuffled_c18o_means.append(shuffled_mean_c18o)
+        shuffled_other_line_means.append(shuffled_mean_other_line)
         axis.plot(
-            shuffled_mean_co13,
-            shuffled_mean_c18o,
+            shuffled_mean_key_line,
+            shuffled_mean_other_line,
             ".-",
             markersize=4,
             color="0.6",
             alpha=0.7,
         )
-    mean_shuffled_c18o = np.mean(shuffled_c18o_means, axis=0)
+    mean_shuffled_other_line = np.mean(shuffled_other_line_means, axis=0)
     axis.plot(
-        mean_co13,
-        mean_shuffled_c18o,
+        mean_key_line,
+        mean_shuffled_other_line,
         "ko",
         markersize=4,
-        label=f"Mean shuffled C$^{{18}}$O ({len(shuffled_c18o_values)} realizations)",
+        label=f"Mean shuffled {other_line} ({len(shuffled_other_line_values)} realizations)",
     )
     axis.plot(
-        mean_co13,
-        noise_per_selected_voxel(c18o_rms, counts, pixels_per_beam),
+        mean_key_line,
+        noise_per_selected_voxel(other_line_rms, counts, pixels_per_beam),
         "k--",
-        label=r"C$^{18}$O RMS / $\sqrt{N_{\rm voxels}/N_{\rm pix/beam}}$",
+        label=rf"{other_line} RMS / $\sqrt{{N_{{\rm voxels}}/N_{{\rm pix/beam}}}}$",
     )
-    axis.set_xlabel(r"Mean $^{13}$CO(1-0) for voxels above threshold (K)")
-    axis.set_ylabel(r"Mean C$^{18}$O(1-0) for the same voxels (K)")
+    axis.set_xlabel(f"Mean {key_line} for voxels above threshold (K)")
+    axis.set_ylabel(f"Mean {other_line} for the same voxels (K)")
     axis.set_title(f"{cloud} cumulative above-threshold voxel means")
     axis.grid(alpha=0.25)
     #axis.set_xscale("log")
@@ -166,68 +168,68 @@ def plot_cumulative_means(
     inset_axis.set_xticks([])
     inset_axis.set_yticks([])
     figure.savefig(output, dpi=200)
-    print(f"Saved {output} using {bins} linearly spaced 13CO thresholds")
+    print(f"Saved {output} using {bins} linearly spaced {key_line} thresholds")
 
 
 def plot_differential_means(
     cloud,
-    co13_values,
-    c18o_values,
-    shuffled_c18o_values,
+    key_line_values,
+    other_line_values,
+    shuffled_other_line_values,
     highest_differential_bin_image,
-    c18o_rms,
+    other_line_rms,
     pixels_per_beam,
     bins,
     output,
 ):
-    mean_co13, mean_c18o, counts, _ = differential_means(
-        co13_values,
-        c18o_values,
+    mean_key_line, mean_other_line, counts, _ = differential_means(
+        key_line_values,
+        other_line_values,
         bins,
     )
 
     figure, axis = pl.subplots(figsize=(7, 6), constrained_layout=True)
-    axis.plot(mean_co13, mean_c18o, ".-", markersize=4, label="Aligned C$^{18}$O")
-    for index in range(len(mean_co13) - 5, len(mean_co13)):
+    axis.plot(mean_key_line, mean_other_line, ".-", markersize=4, label=f"Aligned {other_line}")
+    for index in range(len(mean_key_line) - 5, len(mean_key_line)):
         axis.annotate(
             f"{counts[index]:,}",
-            (mean_co13[index], mean_c18o[index]),
+            (mean_key_line[index], mean_other_line[index]),
             xytext=(5, 5),
             textcoords="offset points",
             fontsize=8,
         )
-    shuffled_c18o_means = []
-    for shuffled_values in shuffled_c18o_values:
-        shuffled_mean_co13, shuffled_mean_c18o, _, _ = differential_means(
-            co13_values,
+    shuffled_other_line_means = []
+    for shuffled_values in shuffled_other_line_values:
+        shuffled_mean_key_line, shuffled_mean_other_line, _, _ = differential_means(
+            key_line_values,
             shuffled_values,
             bins,
         )
-        shuffled_c18o_means.append(shuffled_mean_c18o)
+        shuffled_other_line_means.append(shuffled_mean_other_line)
         axis.plot(
-            shuffled_mean_co13,
-            shuffled_mean_c18o,
+            shuffled_mean_key_line,
+            shuffled_mean_other_line,
             ".-",
             markersize=4,
             color="0.6",
             alpha=0.7,
         )
-    mean_shuffled_c18o = np.mean(shuffled_c18o_means, axis=0)
+    mean_shuffled_other_line = np.mean(shuffled_other_line_means, axis=0)
     axis.plot(
-        mean_co13,
-        mean_shuffled_c18o,
+        mean_key_line,
+        mean_shuffled_other_line,
         "ko",
         markersize=4,
-        label=f"Mean shuffled C$^{{18}}$O ({len(shuffled_c18o_values)} realizations)",
+        label=f"Mean shuffled {other_line} ({len(shuffled_other_line_values)} realizations)",
     )
     axis.plot(
-        mean_co13,
-        noise_per_selected_voxel(c18o_rms, counts, pixels_per_beam),
+        mean_key_line,
+        noise_per_selected_voxel(other_line_rms, counts, pixels_per_beam),
         "k--",
-        label=r"C$^{18}$O RMS / $\sqrt{N_{\rm voxels}/N_{\rm pix/beam}}$",
+        label=rf"{other_line} RMS / $\sqrt{{N_{{\rm voxels}}/N_{{\rm pix/beam}}}}$",
     )
-    axis.set_xlabel(r"Mean $^{13}$CO(1-0) in threshold interval (K)")
-    axis.set_ylabel(r"Mean C$^{18}$O(1-0) for the same voxels (K)")
+    axis.set_xlabel(f"Mean {key_line} in threshold interval (K)")
+    axis.set_ylabel(f"Mean {other_line} for the same voxels (K)")
     axis.set_title(f"{cloud} differential threshold voxel means")
     axis.grid(alpha=0.25)
     axis.legend(loc="center left")
@@ -253,7 +255,7 @@ def main():
         "--threshold-bins",
         type=int,
         default=40,
-        help="Number of linearly spaced 13CO thresholds for cumulative means",
+        help=f"Number of linearly spaced {key_line} thresholds for cumulative means",
     )
     parser.add_argument(
         "--cumulative-output",
@@ -267,103 +269,107 @@ def main():
         "--shuffle-seed",
         type=int,
         default=12345,
-        help="Random seed for the C18O channel permutation",
+        help=f"Random seed for the {other_line} channel permutation",
     )
     parser.add_argument(
         "--shuffle-realizations",
         type=int,
         default=100,
-        help="Number of shuffled C18O channel realizations",
+        help=f"Number of shuffled {other_line} channel realizations",
     )
     args = parser.parse_args()
     if args.output is None:
-        args.output = f"{args.cloud}_13CO10_vs_C18O10_pixel_distribution.png"
+        args.output = f"{args.cloud}_{key_line}_vs_{other_line}_pixel_distribution.png"
     if args.cumulative_output is None:
-        args.cumulative_output = f"{args.cloud}_13CO10_vs_C18O10_cumulative_means.png"
+        args.cumulative_output = f"{args.cloud}_{key_line}_vs_{other_line}_cumulative_means.png"
     if args.differential_output is None:
-        args.differential_output = f"{args.cloud}_13CO10_vs_C18O10_differential_means.png"
+        args.differential_output = f"{args.cloud}_{key_line}_vs_{other_line}_differential_means.png"
 
-    co13_file = find_cube(args.cloud, "13CO10")
-    c18o_file = find_cube(args.cloud, "C18O10")
-    co13 = fits.getdata(co13_file, memmap=True)
-    c18o = fits.getdata(c18o_file, memmap=True)
-    c18o_header = fits.getheader(c18o_file)
+    key_line_file = find_cube(args.cloud, key_line)
+    other_line_file = find_cube(args.cloud, other_line)
+    key_line_data = fits.getdata(key_line_file, memmap=True)
+    other_line_data = fits.getdata(other_line_file, memmap=True)
+    other_line_header = fits.getheader(other_line_file)
 
-    if co13.shape != c18o.shape:
-        raise RuntimeError(f"Cube shape mismatch: {co13.shape} versus {c18o.shape}")
+    if key_line_data.shape != other_line_data.shape:
+        raise RuntimeError(
+            f"Cube shape mismatch: {key_line_data.shape} versus {other_line_data.shape}"
+        )
 
-    c18o_noise_channels = np.concatenate((c18o[:5], c18o[-5:]))
-    c18o_rms = np.sqrt(np.nanmean(c18o_noise_channels**2))
+    other_line_noise_channels = np.concatenate((other_line_data[:5], other_line_data[-5:]))
+    other_line_rms = np.sqrt(np.nanmean(other_line_noise_channels**2))
     pixels_per_beam = (
-        c18o_header["BMAJ"]
-        * c18o_header["BMIN"]
-        / c18o_header["CDELT2"] ** 2
+        other_line_header["BMAJ"]
+        * other_line_header["BMIN"]
+        / other_line_header["CDELT2"] ** 2
         * np.pi
         / (4 * np.log(2))
     )
 
-    c18o_valid_spatial_pixels = np.all(np.isfinite(c18o), axis=0)
-    good = np.isfinite(co13) & c18o_valid_spatial_pixels
-    co13_values = co13[good]
-    c18o_values = c18o[good]
-    if len(co13_values) == 0:
-        raise RuntimeError("No finite 13CO/C18O voxel pairs found")
+    other_line_valid_spatial_pixels = np.all(np.isfinite(other_line_data), axis=0)
+    good = np.isfinite(key_line_data) & other_line_valid_spatial_pixels
+    key_line_values = key_line_data[good]
+    other_line_values = other_line_data[good]
+    if len(key_line_values) == 0:
+        raise RuntimeError(f"No finite {key_line}/{other_line} voxel pairs found")
 
-    _, _, _, thresholds = cumulative_means(co13_values, c18o_values, args.threshold_bins)
-    highest_bin_mask = good & (co13 >= thresholds[-1])
+    _, _, _, thresholds = cumulative_means(key_line_values, other_line_values, args.threshold_bins)
+    highest_bin_mask = good & (key_line_data >= thresholds[-1])
     highest_bin_image = np.sum(highest_bin_mask, axis=0)
     _, _, _, differential_thresholds = differential_means(
-        co13_values,
-        c18o_values,
+        key_line_values,
+        other_line_values,
         args.threshold_bins,
     )
-    highest_differential_bin_mask = good & (co13 >= differential_thresholds[-1])
+    highest_differential_bin_mask = good & (key_line_data >= differential_thresholds[-1])
     highest_differential_bin_image = np.sum(highest_differential_bin_mask, axis=0)
 
     random_generator = np.random.default_rng(args.shuffle_seed)
-    shuffled_c18o_values = []
+    shuffled_other_line_values = []
     for realization in range(args.shuffle_realizations):
-        shuffled_c18o = c18o[random_generator.permutation(c18o.shape[0])]
-        shuffled_values = shuffled_c18o[good]
+        shuffled_other_line = other_line_data[
+            random_generator.permutation(other_line_data.shape[0])
+        ]
+        shuffled_values = shuffled_other_line[good]
         if not np.all(np.isfinite(shuffled_values)):
             raise RuntimeError(
-                f"Shuffled C18O realization {realization + 1} has non-finite selected pixels"
+                f"Shuffled {other_line} realization {realization + 1} has non-finite selected pixels"
             )
-        shuffled_c18o_values.append(shuffled_values)
+        shuffled_other_line_values.append(shuffled_values)
 
     figure, axis = pl.subplots(figsize=(7, 6), constrained_layout=True)
     histogram = axis.hist2d(
-        co13_values,
-        c18o_values,
+        key_line_values,
+        other_line_values,
         bins=args.bins,
         norm=LogNorm(),
         cmap="viridis",
     )
     colorbar = figure.colorbar(histogram[3], ax=axis)
     colorbar.set_label("Number of voxels")
-    axis.set_xlabel(r"$^{13}$CO(1-0) brightness temperature (K)")
-    axis.set_ylabel(r"C$^{18}$O(1-0) brightness temperature (K)")
-    axis.set_title(f"{args.cloud} voxel distribution (N = {len(co13_values):,})")
+    axis.set_xlabel(f"{key_line} brightness temperature (K)")
+    axis.set_ylabel(f"{other_line} brightness temperature (K)")
+    axis.set_title(f"{args.cloud} voxel distribution (N = {len(key_line_values):,})")
     figure.savefig(args.output, dpi=200)
-    print(f"Saved {args.output} from {len(co13_values):,} finite voxel pairs")
+    print(f"Saved {args.output} from {len(key_line_values):,} finite voxel pairs")
     plot_cumulative_means(
         args.cloud,
-        co13_values,
-        c18o_values,
-        shuffled_c18o_values,
+        key_line_values,
+        other_line_values,
+        shuffled_other_line_values,
         highest_bin_image,
-        c18o_rms,
+        other_line_rms,
         pixels_per_beam,
         args.threshold_bins,
         args.cumulative_output,
     )
     plot_differential_means(
         args.cloud,
-        co13_values,
-        c18o_values,
-        shuffled_c18o_values,
+        key_line_values,
+        other_line_values,
+        shuffled_other_line_values,
         highest_differential_bin_image,
-        c18o_rms,
+        other_line_rms,
         pixels_per_beam,
         args.threshold_bins,
         args.differential_output,
