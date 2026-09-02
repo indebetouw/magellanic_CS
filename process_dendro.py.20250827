@@ -1,0 +1,175 @@
+from astrodendro import Dendrogram
+from glob import glob
+from astropy.io import fits
+import numpy as np
+import matplotlib.pyplot as pl
+from scipy.optimize import curve_fit
+pl.ion()
+pl.figure(figsize=(10,8))
+
+
+cloud = "A439"
+key_line = '13CO10'
+debug = False
+
+d=Dendrogram.load_from(cloud+"_13CO10_dendrogram.hdf5")
+
+linefiles=glob("../products_1pc/"+cloud+"*4asec_grid_K.fits")
+# remove continuum
+linefiles=np.array([x for x in linefiles if "cont" not in x])
+lines=np.array([x.split("/")[-1].split("_")[1] for x in linefiles])
+# put key line first
+if key_line in lines:
+    z = np.where(lines==key_line)[0][0]
+    linefiles=np.concatenate([[linefiles[z]],np.delete(linefiles,z)])
+
+stats={}
+for linefile in linefiles:
+    if 'C18O10' in linefile: debug=True
+
+    stat={}
+    stat['linefile']=linefile
+    stat['line']=linefile.split("/")[-1].split("_")[1]
+
+    linedata=fits.getdata(linefile)
+    # todo checks on linefile WCS compared to dendro WCS
+
+    pk = np.zeros([len(d),2]) # true peak of angle-summed spectrum, divided by area at that channel, and divided by 2d mask area
+    pk_from_mom = np.zeros([len(d),2]) 
+    pk_from_fit = np.zeros([len(d),2]) 
+    moments = np.zeros([3,len(d)])
+    fitparms = np.zeros([len(d),4])
+    for x in d:
+        mask=x.get_mask()
+        # linedata*mask puts zeros where mask is False, so nansum works here, nanmean doesn't
+        spectrum=np.nansum(linedata*mask, axis=(1, 2))
+
+        # collect area spectrum, and create 2D mask
+        mask2d = mask.sum(axis=0) > 0
+        areaspectrum = np.zeros(linedata.shape[0])
+        for i in range(linedata.shape[0]):
+            areaspectrum[i] = np.sum(mask[i])
+
+
+        pkindex = np.nanargmax(spectrum)
+        pk[x.idx,0]=np.nanmax(spectrum)/areaspectrum[pkindex]
+        pk[x.idx,1]=np.nanmax(spectrum)/np.sum(mask2d)
+
+        mom0=np.nansum(linedata*mask) # K*km/s*pix2
+        moments[0,x.idx]=mom0
+        moments[1,x.idx]=np.nansum(np.arange(linedata.shape[0])*spectrum)/mom0 # K*km/s*pix2 weighted mean
+        moments[2,x.idx]=np.sqrt(np.nansum((np.arange(linedata.shape[0])-moments[1,x.idx])**2*spectrum)/mom0) # K*km/s*pix2 weighted std
+
+        if np.isfinite(moments[2,x.idx]):
+            # divide by area of nearest channel to the mom1
+            pk_from_mom[x.idx,0] = moments[0,x.idx]/moments[2,x.idx]/np.sqrt(2*np.pi)/areaspectrum[int(np.round(moments[1,x.idx]))]
+            # divide by the total 2D mask area
+            pk_from_mom[x.idx,1] = moments[0,x.idx]/moments[2,x.idx]/np.sqrt(2*np.pi)/np.sum(mask2d)   
+
+        if stat['line']==key_line:
+            momentsk=moments
+        else:
+            momentsk=stats[key_line]['moments']
+        # now get a wider range of indices over which we fit a Gaussian, over +/- 3 sigma
+        vindices = np.arange(
+            np.max([np.floor(momentsk[1,x.idx]-3*momentsk[2,x.idx]),0]),
+            np.min([np.ceil(momentsk[1,x.idx]+3*momentsk[2,x.idx]),linedata.shape[0]-1]),
+            dtype=int)
+
+        # gaussfit a,b,v0,vsig    [ y=a*exp(-0.5*((v-v0)/vsig)**2)+b ]
+        z=np.where(np.isfinite(spectrum[vindices]))[0]
+        vindices=vindices[z]
+        
+        # TODO would be better to seed the amplitude with the cube rms
+        popt, pcov = curve_fit(
+            lambda x, *p: p[0] * np.exp(-0.5*((x-p[1])/p[2])**2),
+            vindices,spectrum[vindices],
+            bounds=[(np.min([np.nanmin(spectrum[vindices]),-1e-3]),
+                     momentsk[1,x.idx]-momentsk[2,x.idx],  # center can move by 1 sigma
+                     0.5*momentsk[2,x.idx]), # width can vary from half to twice the initial guess
+                    (np.max([np.nanmax(spectrum[vindices]),1e-3]),
+                     momentsk[1,x.idx]+momentsk[2,x.idx],
+                     2*momentsk[2,x.idx])],
+            p0=[1e-4,momentsk[1,x.idx],momentsk[2,x.idx]])
+            
+        fitparms[x.idx]=[popt[0],0,popt[1],popt[2]]
+
+        # divide by area of nearest channel to the mom1
+        pk_from_fit[x.idx,0] = popt[0]/areaspectrum[int(np.round(popt[1]))]
+        # divide by the total 2D mask area
+        pk_from_fit[x.idx,1] = popt[0]/np.sum(mask2d)   
+
+        stat['pk_from_mom'] = pk_from_mom
+        stat['pk_from_fit'] = pk_from_fit
+        # check some of these for C18O ; maybe put them out in a bank of plots
+
+        if debug:
+            pl.clf()
+            pl.plot(spectrum,'*')
+            pl.plot(vindices,popt[0] * np.exp(-0.5*((vindices-popt[1])/popt[2])**2))
+            pl.title(f"Peak spectrum for {stat['line']} at dendrogram index {x.idx}")
+            pl.xlim(np.max([np.min(vindices),0]), np.min([np.max(vindices),linedata.shape[0]-1]))
+            pl.show()
+
+
+
+
+    stat['pk']=pk
+    stat['moments']=moments 
+    stat['fitparms']=fitparms
+    stats[stat['line']]=stat
+    print(stat['line']+" done")
+
+pl.clf()
+for line in lines:
+    pl.subplot(221)
+    myplot, = pl.plot(stats[line]['pk_from_mom'][:,0],stats[line]['pk'][:,0],'.', label=line)
+    pl.subplot(222)
+    pl.plot(stats[line]['pk_from_mom'][:,0],stats[line]['pk_from_fit'][:,0],'.',color=myplot.get_color())
+    pl.subplot(223)
+    pl.plot(stats[line]['pk_from_mom'][:,0],stats[line]['pk_from_mom'][:,1],'.', color=myplot.get_color())
+    pl.subplot(224)
+    pl.plot(stats[line]['pk'][:,0],stats[line]['pk'][:,1],'.',color=myplot.get_color())
+pl.subplot(221)
+pl.xlabel('Mom0 / Mom2 / sqrt(2*pi)')
+pl.ylabel('Peak')
+pl.legend(prop={'size': 8})
+pl.xscale('log')
+pl.yscale('log')
+pl.plot(pl.xlim(),pl.xlim(),'k',alpha=0.3)
+
+pl.subplot(222)
+pl.xlabel('Mom0 / Mom2 / sqrt(2*pi)')
+pl.ylabel('Peak from fit')
+pl.xscale('log')
+pl.yscale('log')
+pl.plot(pl.xlim(),pl.xlim(),'k',alpha=0.3)
+pl.ylim(pl.xlim())
+
+pl.subplot(223)
+pl.xlabel('mom peak w/1d area')
+pl.ylabel('mom peak w/2d area')
+pl.xscale('log')
+pl.yscale('log')
+pl.plot(pl.xlim(),pl.xlim(),'k',alpha=0.3)
+
+pl.subplot(224)
+pl.xlabel('Peak w/1d area')
+pl.ylabel('Peak w/2d area')
+pl.xscale('log')
+pl.yscale('log')
+pl.plot(pl.xlim(),pl.xlim(),'k',alpha=0.3)
+
+pl.subplots_adjust(top=0.95,right=0.95,hspace=0.25,wspace=0.25)
+pl.savefig(cloud+"_peak_vs_mom0_over_mom2_log.png")
+
+
+for k in range(4):
+    pl.subplot(2,2,1+k)
+    pl.xscale("linear") 
+    pl.yscale("linear") 
+    pl.xlim(-1,2)
+    pl.ylim(-1,2)
+pl.savefig(cloud+"_peak_vs_mom0_over_mom2.png")
+
+    
