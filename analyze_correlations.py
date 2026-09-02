@@ -105,6 +105,101 @@ def noise_per_selected_voxel(other_line_rms, counts, pixels_per_beam):
     return other_line_rms / np.sqrt(counts / pixels_per_beam)
 
 
+def shifted_spectra(spectra, center_channels):
+    """Shift spectra to a shared center channel without wrapping edge values."""
+    channel_count, spectrum_count = spectra.shape
+    centered_spectra = np.full((channel_count, spectrum_count), np.nan)
+    center_channel = channel_count // 2
+    source_channels = np.arange(channel_count)
+    for spectrum_index, center in enumerate(center_channels):
+        destination_channels = source_channels - center + center_channel
+        valid = (destination_channels >= 0) & (destination_channels < channel_count)
+        centered_spectra[destination_channels[valid], spectrum_index] = spectra[
+            source_channels[valid], spectrum_index
+        ]
+    return centered_spectra
+
+
+def weighted_spectrum_mean(spectra, weights):
+    finite = np.isfinite(spectra)
+    weighted_values = np.where(finite, spectra * weights[np.newaxis, :], 0.0)
+    weight_sums = np.sum(finite * weights[np.newaxis, :], axis=1)
+    return np.divide(
+        np.sum(weighted_values, axis=1),
+        weight_sums,
+        out=np.full(spectra.shape[0], np.nan),
+        where=weight_sums > 0,
+    )
+
+
+def spectrum_mean(spectra):
+    finite = np.isfinite(spectra)
+    counts = np.sum(finite, axis=1)
+    return np.divide(
+        np.nansum(spectra, axis=1),
+        counts,
+        out=np.full(spectra.shape[0], np.nan),
+        where=counts > 0,
+    )
+
+
+def plot_aligned_spectra(
+    cloud,
+    key_line_data,
+    other_line_data,
+    highest_bin_mask,
+    output,
+):
+    selected_pixels = np.any(highest_bin_mask, axis=0)
+    key_line_spectra = key_line_data[:, selected_pixels]
+    other_line_spectra = other_line_data[:, selected_pixels]
+    channels = np.arange(key_line_data.shape[0])
+    moment_zero = np.nansum(key_line_spectra, axis=0)
+    moment_one = np.divide(
+        np.nansum(channels[:, np.newaxis] * key_line_spectra, axis=0),
+        moment_zero,
+        out=np.full(key_line_spectra.shape[1], np.nan),
+        where=moment_zero > 0,
+    )
+    peak_weights = np.nanmax(key_line_spectra, axis=0)
+    valid_spectra = np.isfinite(moment_one) & np.isfinite(peak_weights) & (peak_weights > 0)
+    if not np.any(valid_spectra):
+        raise RuntimeError(f"No valid {key_line} spectra in the highest threshold bin")
+
+    centered_key_line = shifted_spectra(
+        key_line_spectra[:, valid_spectra],
+        np.rint(moment_one[valid_spectra]).astype(int),
+    )
+    centered_other_line = shifted_spectra(
+        other_line_spectra[:, valid_spectra],
+        np.rint(moment_one[valid_spectra]).astype(int),
+    )
+    weights = peak_weights[valid_spectra]
+    centered_channels = channels - (key_line_data.shape[0] // 2)
+
+    figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
+    axis.plot(centered_channels, spectrum_mean(centered_key_line), label=f"{key_line} unweighted")
+    axis.plot(
+        centered_channels,
+        weighted_spectrum_mean(centered_key_line, weights),
+        label=f"{key_line} peak-weighted",
+    )
+    axis.plot(centered_channels, spectrum_mean(centered_other_line), label=f"{other_line} unweighted")
+    axis.plot(
+        centered_channels,
+        weighted_spectrum_mean(centered_other_line, weights),
+        label=f"{other_line} peak-weighted",
+    )
+    axis.set_xlabel(f"Channel offset from {key_line} moment 1")
+    axis.set_ylabel("Mean brightness temperature (K)")
+    axis.set_title(f"{cloud} highest-threshold pixel spectra (N = {np.sum(valid_spectra):,})")
+    axis.grid(alpha=0.25)
+    axis.legend()
+    figure.savefig(output, dpi=200)
+    pl.close(figure)
+    print(f"Saved {output} from {np.sum(valid_spectra):,} centered pixel spectra")
+
+
 def plot_cumulative_means(
     cloud,
     key_line_values,
@@ -259,6 +354,7 @@ def analyze_cloud(cloud, args, output_directory):
     output = output_directory / f"{cloud}_{key_line}_vs_{other_line}_pixel_distribution.png"
     cumulative_output = output_directory / f"{cloud}_{key_line}_vs_{other_line}_cumulative_means.png"
     differential_output = output_directory / f"{cloud}_{key_line}_vs_{other_line}_differential_means.png"
+    spectra_output = output_directory / f"{cloud}_{key_line}_vs_{other_line}_highest_bin_spectra.png"
 
     key_line_file = find_cube(cloud, key_line)
     other_line_file = find_cube(cloud, other_line)
@@ -291,6 +387,13 @@ def analyze_cloud(cloud, args, output_directory):
     _, _, _, thresholds = cumulative_means(key_line_values, other_line_values, args.threshold_bins)
     highest_bin_mask = good & (key_line_data >= thresholds[-1])
     highest_bin_image = np.sum(highest_bin_mask, axis=0)
+    plot_aligned_spectra(
+        cloud,
+        key_line_data,
+        other_line_data,
+        highest_bin_mask,
+        spectra_output,
+    )
     _, _, _, differential_thresholds = differential_means(
         key_line_values,
         other_line_values,
