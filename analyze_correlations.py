@@ -5,6 +5,7 @@ from glob import glob
 from pathlib import Path
 
 from astropy.io import fits
+from astropy.table import Table
 from matplotlib.colors import LogNorm
 import matplotlib.pyplot as pl
 import numpy as np
@@ -15,6 +16,7 @@ DEFAULT_CLOUD = "A439"
 key_line = "13CO10"
 other_line = "C18O10"
 OUTPUT_DIRECTORY = "analyze_correlation_plots"
+FIT_TABLE_FILENAME = "differential_mean_fits.csv"
 MINIMUM_THRESHOLD_VOXELS = 1000
 LOW_BRIGHTNESS_THRESHOLD = 0.1
 LOW_BRIGHTNESS_BIN_COUNT = 15
@@ -250,22 +252,24 @@ def plot_aligned_spectra(
     centered_channels = channels - (key_line_data.shape[0] // 2)
     mean_key_line = spectrum_mean(centered_key_line)
     weighted_mean_key_line = weighted_spectrum_mean(centered_key_line, weights)
-    mean_other_line = spectrum_mean(centered_other_line) * 5
-    weighted_mean_other_line = weighted_spectrum_mean(centered_other_line, weights) * 5
 
-    figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
-    axis.plot(centered_channels, mean_key_line, label=f"{key_line} unweighted")
-    axis.plot(centered_channels, weighted_mean_key_line, label=f"{key_line} peak-weighted")
-    axis.plot(centered_channels, mean_other_line, label=f"{other_line} unweighted (x5)")
-    axis.plot(centered_channels, weighted_mean_other_line, label=f"{other_line} peak-weighted (x5)")
-    axis.set_xlabel(f"Channel offset from {key_line} moment 1")
-    axis.set_ylabel("Mean brightness temperature (K)")
-    axis.set_title(f"{cloud} highest-threshold pixel spectra (N = {np.sum(valid_spectra):,})")
-    axis.grid(alpha=0.25)
-    axis.legend()
-    figure.savefig(output, dpi=200)
-    pl.close(figure)
-    print(f"Saved {output} from {np.sum(valid_spectra):,} centered pixel spectra")
+    multiplier = 10
+    mean_other_line = spectrum_mean(centered_other_line) 
+    weighted_mean_other_line = weighted_spectrum_mean(centered_other_line, weights) 
+
+    # figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
+    # axis.plot(centered_channels, mean_key_line, label=f"{key_line} unweighted")
+    # axis.plot(centered_channels, weighted_mean_key_line, label=f"{key_line} peak-weighted")
+    # axis.plot(centered_channels, mean_other_line * multiplier, label=f"{other_line} unweighted (x{multiplier})")
+    # axis.plot(centered_channels, weighted_mean_other_line * multiplier, label=f"{other_line} peak-weighted (x{multiplier})")
+    # axis.set_xlabel(f"Channel offset from {key_line} moment 1")
+    # axis.set_ylabel("Mean brightness temperature (K)")
+    # axis.set_title(f"{cloud} highest-threshold pixel spectra (N = {np.sum(valid_spectra),})")
+    # axis.grid(alpha=0.25)
+    # axis.legend()
+    # figure.savefig(output, dpi=150)
+    # pl.close(figure)
+    # print(f"Saved {output} from {np.sum(valid_spectra):,} centered pixel spectra")
     return (
         centered_channels,
         mean_key_line,
@@ -344,7 +348,7 @@ def plot_cumulative_means(
     inset_axis.set_title("Highest-threshold voxels", fontsize=8)
     inset_axis.set_xticks([])
     inset_axis.set_yticks([])
-    figure.savefig(output, dpi=200)
+    figure.savefig(output, dpi=150)
     pl.close(figure)
     print(f"Saved {output} using {bins} linearly spaced {key_line} thresholds")
 
@@ -367,6 +371,35 @@ def plot_differential_means(
         other_line_values,
         bins,
     )
+
+    rms_threshold = noise_per_selected_voxel(
+        other_line_rms, counts, pixels_per_beam
+    )
+    fit_mask = (
+        np.isfinite(mean_key_line)
+        & np.isfinite(mean_other_line)
+        & np.isfinite(rms_threshold)
+        & (mean_key_line > 0)
+        & (mean_other_line > rms_threshold)
+    )
+    fitted_slope = np.nan
+    fitted_offset = np.nan
+    fitted_slope_error = np.nan
+    fitted_offset_error = np.nan
+    threshold_value = np.nan
+    if np.any(fit_mask):
+        threshold_value = float(np.min(mean_key_line[fit_mask]))
+    if np.sum(fit_mask) >= 3:
+        coefficients, covariance = np.polyfit(
+            np.log10(mean_key_line[fit_mask]),
+            np.log10(mean_other_line[fit_mask]),
+            1,
+            cov=True,
+        )
+        fitted_slope = float(coefficients[0])
+        fitted_offset = float(coefficients[1])
+        fitted_slope_error = float(np.sqrt(np.clip(covariance[0, 0], 0, np.inf)))
+        fitted_offset_error = float(np.sqrt(np.clip(covariance[1, 1], 0, np.inf)))
 
     figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
     axis.plot(mean_key_line, mean_other_line, ".-", markersize=4, label=f"Aligned {other_line}")
@@ -403,7 +436,7 @@ def plot_differential_means(
     )
     axis.plot(
         mean_key_line,
-        noise_per_selected_voxel(other_line_rms, counts, pixels_per_beam),
+        rms_threshold,
         "k--",
         label=rf"{other_line} RMS / $\sqrt{{N_{{\rm voxels}}/N_{{\rm pix/beam}}}}$",
     )
@@ -416,22 +449,33 @@ def plot_differential_means(
         loc=left_legend_location(
             np.concatenate((mean_key_line, mean_key_line)), legend_y_values
         ),
-        fontsize=10,
+        fontsize=8,
     )
     inset_axis = axis.inset_axes([0.03, 0.64, 0.30, 0.30])
+    multiplier = 10
     centered_channels, mean_key_line_spectrum, weighted_mean_key_line, mean_other_line_spectrum, weighted_mean_other_line = aligned_spectrum
     inset_axis.plot(centered_channels, mean_key_line_spectrum)
     inset_axis.plot(centered_channels, weighted_mean_key_line)
-    inset_axis.plot(centered_channels, mean_other_line_spectrum)
-    inset_axis.plot(centered_channels, weighted_mean_other_line)
+    inset_axis.plot(centered_channels, mean_other_line_spectrum * multiplier)
+    inset_axis.plot(centered_channels, weighted_mean_other_line * multiplier)
     inset_axis.set_title("Centered spectra", fontsize=8)
     inset_axis.tick_params(labelsize=7)
-    figure.savefig(output, dpi=200)
+    figure.savefig(output, dpi=150)
     pl.close(figure)
     print(
         f"Saved {output} using {LOW_BRIGHTNESS_BIN_COUNT} linear intervals below "
         f"approximately {LOW_BRIGHTNESS_THRESHOLD} K and "
         f"{HIGH_BRIGHTNESS_VOXELS_PER_BIN}-voxel intervals above"
+    )
+    return (
+        cloud,
+        key_line,
+        other_line,
+        fitted_slope,
+        threshold_value,
+        fitted_offset,
+        fitted_slope_error,
+        fitted_offset_error,
     )
 
 
@@ -520,7 +564,7 @@ def analyze_cloud(cloud, args, output_directory):
     axis.set_xlabel(f"{key_line} brightness temperature (K)")
     axis.set_ylabel(f"{other_line} brightness temperature (K)")
     axis.set_title(f"{cloud} voxel distribution (N = {len(key_line_values):,})")
-    figure.savefig(output, dpi=200)
+    figure.savefig(output, dpi=150)
     pl.close(figure)
     print(f"Saved {output} from {len(key_line_values):,} finite voxel pairs")
     plot_cumulative_means(
@@ -535,7 +579,7 @@ def analyze_cloud(cloud, args, output_directory):
         cumulative_shuffle_plan,
         cumulative_output,
     )
-    plot_differential_means(
+    return plot_differential_means(
         cloud,
         key_line_values,
         other_line_values,
@@ -582,8 +626,21 @@ def main():
     clouds = args.cloud or find_clouds()
     if not clouds:
         raise RuntimeError(f"No {key_line} cubes found in {PRODUCT_DIRECTORY}")
-    for cloud in clouds:
-        analyze_cloud(cloud, args, output_directory)
+    fit_rows = [analyze_cloud(cloud, args, output_directory) for cloud in clouds]
+    fit_table = Table(
+        rows=fit_rows,
+        names=(
+            "cloud",
+            "key_line",
+            "other_line",
+            "fitted_slope",
+            "threshold_value",
+            "fitted_offset",
+            "fitted_slope_error",
+            "fitted_offset_error",
+        ),
+    )
+    fit_table.write(output_directory / FIT_TABLE_FILENAME, format="ascii.csv", overwrite=True)
 
 
 if __name__ == "__main__":
