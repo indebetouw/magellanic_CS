@@ -297,7 +297,13 @@ for dendrofile in dendrofiles:
 
             linedata=fits.getdata(linefile)
             linermsspec = np.nanstd(linedata, axis=(1, 2))
-            linerms = np.nanmedian(np.concatenate([linermsspec[0:5],linermsspec[-5:]]))
+            valid_channels = np.flatnonzero(
+                np.any(np.isfinite(linedata), axis=(1, 2))
+            )
+            edge_channels = np.unique(
+                np.concatenate([valid_channels[:5], valid_channels[-5:]])
+            )
+            linerms = np.nanmedian(linermsspec[edge_channels])
             # todo checks on linefile WCS compared to dendro WCS
 
             pk = np.zeros([len(d),2]) # true peak of angle-summed spectrum, divided by area at that channel, and divided by 2d mask area
