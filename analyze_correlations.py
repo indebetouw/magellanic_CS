@@ -204,6 +204,17 @@ def spectrum_mean(spectra):
     )
 
 
+def left_legend_location(x_values, y_values):
+    x_min, x_max = np.nanmin(x_values), np.nanmax(x_values)
+    y_min, y_max = np.nanmin(y_values), np.nanmax(y_values)
+    left = x_values <= x_min + 0.4 * (x_max - x_min)
+    lower_left = left & (y_values <= y_min + 0.35 * (y_max - y_min))
+    center_left = left & (y_values >= y_min + 0.3 * (y_max - y_min)) & (
+        y_values <= y_min + 0.7 * (y_max - y_min)
+    )
+    return "lower left" if np.sum(lower_left) <= np.sum(center_left) else "center left"
+
+
 def plot_aligned_spectra(
     cloud,
     key_line_data,
@@ -237,20 +248,16 @@ def plot_aligned_spectra(
     )
     weights = peak_weights[valid_spectra]
     centered_channels = channels - (key_line_data.shape[0] // 2)
+    mean_key_line = spectrum_mean(centered_key_line)
+    weighted_mean_key_line = weighted_spectrum_mean(centered_key_line, weights)
+    mean_other_line = spectrum_mean(centered_other_line) * 5
+    weighted_mean_other_line = weighted_spectrum_mean(centered_other_line, weights) * 5
 
     figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
-    axis.plot(centered_channels, spectrum_mean(centered_key_line), label=f"{key_line} unweighted")
-    axis.plot(
-        centered_channels,
-        weighted_spectrum_mean(centered_key_line, weights),
-        label=f"{key_line} peak-weighted",
-    )
-    axis.plot(centered_channels, spectrum_mean(centered_other_line)*5, label=f"{other_line} unweighted (x5)")
-    axis.plot(
-        centered_channels,
-        weighted_spectrum_mean(centered_other_line, weights)*5,
-        label=f"{other_line} peak-weighted (x5)",
-    )
+    axis.plot(centered_channels, mean_key_line, label=f"{key_line} unweighted")
+    axis.plot(centered_channels, weighted_mean_key_line, label=f"{key_line} peak-weighted")
+    axis.plot(centered_channels, mean_other_line, label=f"{other_line} unweighted (x5)")
+    axis.plot(centered_channels, weighted_mean_other_line, label=f"{other_line} peak-weighted (x5)")
     axis.set_xlabel(f"Channel offset from {key_line} moment 1")
     axis.set_ylabel("Mean brightness temperature (K)")
     axis.set_title(f"{cloud} highest-threshold pixel spectra (N = {np.sum(valid_spectra):,})")
@@ -259,6 +266,13 @@ def plot_aligned_spectra(
     figure.savefig(output, dpi=200)
     pl.close(figure)
     print(f"Saved {output} from {np.sum(valid_spectra):,} centered pixel spectra")
+    return (
+        centered_channels,
+        mean_key_line,
+        weighted_mean_key_line,
+        mean_other_line,
+        weighted_mean_other_line,
+    )
 
 
 def plot_cumulative_means(
@@ -345,6 +359,7 @@ def plot_differential_means(
     pixels_per_beam,
     bins,
     shuffle_plan,
+    aligned_spectrum,
     output,
 ):
     mean_key_line, mean_other_line, counts, _ = differential_means(
@@ -396,12 +411,21 @@ def plot_differential_means(
     axis.set_ylabel(f"Mean {other_line} for the same voxels (K)")
     axis.set_title(f"{cloud} differential threshold voxel means")
     axis.grid(alpha=0.25)
-    axis.legend(loc="center left")
+    legend_y_values = np.concatenate((mean_other_line, mean_shuffled_other_line))
+    axis.legend(
+        loc=left_legend_location(
+            np.concatenate((mean_key_line, mean_key_line)), legend_y_values
+        ),
+        fontsize=10,
+    )
     inset_axis = axis.inset_axes([0.03, 0.64, 0.30, 0.30])
-    inset_axis.imshow(highest_differential_bin_image, origin="lower", cmap="magma")
-    inset_axis.set_title("Brightest-threshold interval", fontsize=8)
-    inset_axis.set_xticks([])
-    inset_axis.set_yticks([])
+    centered_channels, mean_key_line_spectrum, weighted_mean_key_line, mean_other_line_spectrum, weighted_mean_other_line = aligned_spectrum
+    inset_axis.plot(centered_channels, mean_key_line_spectrum)
+    inset_axis.plot(centered_channels, weighted_mean_key_line)
+    inset_axis.plot(centered_channels, mean_other_line_spectrum)
+    inset_axis.plot(centered_channels, weighted_mean_other_line)
+    inset_axis.set_title("Centered spectra", fontsize=8)
+    inset_axis.tick_params(labelsize=7)
     figure.savefig(output, dpi=200)
     pl.close(figure)
     print(
@@ -449,7 +473,7 @@ def analyze_cloud(cloud, args, output_directory):
     cumulative_shuffle_plan = cumulative_plan(key_line_values, args.threshold_bins)
     highest_bin_mask = good & (key_line_data >= thresholds[-1])
     highest_bin_image = np.sum(highest_bin_mask, axis=0)
-    plot_aligned_spectra(
+    aligned_spectrum = plot_aligned_spectra(
         cloud,
         key_line_data,
         other_line_data,
@@ -521,6 +545,7 @@ def analyze_cloud(cloud, args, output_directory):
         pixels_per_beam,
         args.threshold_bins,
         differential_shuffle_plan,
+        aligned_spectrum,
         differential_output,
     )
 
