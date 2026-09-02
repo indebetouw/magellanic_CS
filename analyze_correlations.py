@@ -14,7 +14,7 @@ PRODUCT_DIRECTORY = "../products_1pc"
 DEFAULT_CLOUD = "A439"
 key_line = "13CO10"
 other_line = "C18O10"
-OUTPUT_DIRECTORY = "analyze_correlation"
+OUTPUT_DIRECTORY = "analyze_correlation_plots"
 MINIMUM_THRESHOLD_VOXELS = 1000
 LOW_BRIGHTNESS_THRESHOLD = 0.1
 LOW_BRIGHTNESS_BIN_COUNT = 15
@@ -122,7 +122,7 @@ def plot_cumulative_means(
         bins,
     )
 
-    figure, axis = pl.subplots(figsize=(7, 6), constrained_layout=True)
+    figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
     axis.plot(mean_key_line, mean_other_line, ".-", markersize=4, label=f"Aligned {other_line}")
     for index in range(len(mean_key_line) - 5, len(mean_key_line)):
         axis.annotate(
@@ -196,7 +196,7 @@ def plot_differential_means(
         bins,
     )
 
-    figure, axis = pl.subplots(figsize=(7, 6), constrained_layout=True)
+    figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
     axis.plot(mean_key_line, mean_other_line, ".-", markersize=4, label=f"Aligned {other_line}")
     for index in range(len(mean_key_line) - 5, len(mean_key_line)):
         axis.annotate(
@@ -312,7 +312,7 @@ def analyze_cloud(cloud, args, output_directory):
             )
         shuffled_other_line_values.append(shuffled_values)
 
-    figure, axis = pl.subplots(figsize=(7, 6), constrained_layout=True)
+    figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
     histogram = axis.hist2d(
         key_line_values,
         other_line_values,

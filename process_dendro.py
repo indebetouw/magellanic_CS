@@ -304,7 +304,6 @@ for dendrofile in dendrofiles:
                 np.concatenate([valid_channels[:5], valid_channels[-5:]])
             )
             linerms = np.nanmedian(linermsspec[edge_channels])
-            # todo checks on linefile WCS compared to dendro WCS
 
             pk = np.zeros([len(d),2]) # true peak of angle-summed spectrum, divided by area at that channel, and divided by 2d mask area
             pk_from_mom = np.zeros([len(d),2])

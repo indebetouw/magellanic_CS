@@ -6,7 +6,7 @@ import os
 
 pl.ion()
 
-regression_file = "linefit_logxy.ecsv"
+regression_file = "linefit_logxy_error.ecsv"
 line_output_file = "peak_intercept_vs_slope_by_line.png"
 cloud_output_file = "peak_intercept_vs_slope_by_cloud.png"
 
@@ -77,16 +77,26 @@ def plot_intercept_vs_slope(reg, group_key, colors, output_file, title):
             continue
         slope = np.array(group_rows["slope"], dtype=float)
         offset = np.array(group_rows["offset"], dtype=float)
-        good = np.isfinite(slope) & np.isfinite(offset)
-        if np.sum(good) == 0:
+        dslope = np.array(group_rows["delta_slope"], dtype=float)
+        ok = np.isfinite(slope) & np.isfinite(offset) 
+        good = np.isfinite(slope) & np.isfinite(offset) & (dslope < 0.2)
+        if np.sum(ok) == 0:
             continue
         show_summary = group_key == "line" and len(group_rows) >= 3
+        meh = np.isfinite(slope) & np.isfinite(offset) & (dslope >= 0.2)
         pl.plot(
             slope[good],
             offset[good],
             ".",
             color=colors.get(group),
             label=group if (group_key != "line" or not show_summary) else None,
+        )
+        pl.plot(
+            slope[meh],
+            offset[meh],
+            "o", mfc="none", markersize=6,
+            color=colors.get(group),
+            label=None,
         )
 
         if show_summary:

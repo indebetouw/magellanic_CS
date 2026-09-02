@@ -18,7 +18,7 @@ key_line = "13CO10"
 corr_line = "CS21"
 select_good_method = "error"
 snr_threshold = 3
-max_key_peak = 100
+max_line_peak = 100
 table_file = "allstats.ecsv"
 regression_file = f"linefit_logxy_{select_good_method}.ecsv"
 plot_dir = "analyze_dendro_plots"
@@ -283,7 +283,8 @@ def main():
                 np.isfinite(xvals)
                 & np.isfinite(yvals)
                 & (xvals > 0)
-                & (xvals <= max_key_peak)
+                & (xvals <= max_line_peak)
+                & (yvals <= max_line_peak)
                 & (yvals > 0)
             )
             all_xvals.append(xvals[finite_positive])
@@ -312,7 +313,8 @@ def main():
                     np.isfinite(xvals)
                     & np.isfinite(yvals)
                     & (xvals > 0)
-                    & (xvals <= max_key_peak)
+                    & (xvals <= max_line_peak)
+                    & (yvals <= max_line_peak)
                     & (yvals > 0)
                 )
                 npts = int(np.sum(finite_positive))
@@ -397,7 +399,7 @@ def main():
         pl.ylabel('Other lines pk from mom')
         pl.yscale('log')
         pl.xlim(xx)
-        pl.savefig(os.path.join("./", cloud + f"_pk_different_lines_{select_good_method}.png"))
+        pl.savefig(os.path.join(plot_dir, cloud + f"_pk_different_lines_{select_good_method}.png"))
 
         pl.clf()
         xx = None
@@ -423,7 +425,8 @@ def main():
                 np.isfinite(xvals)
                 & np.isfinite(signal_to_noise)
                 & (xvals > 0)
-                & (xvals <= max_key_peak)
+                & (xvals <= max_line_peak)
+                & (yvals <= max_line_peak)
                 & (signal_to_noise > 0)
             )
             pl.plot(
@@ -458,7 +461,8 @@ def main():
                     np.isfinite(xvals)
                     & np.isfinite(yvals)
                     & (xvals > 0)
-                    & (xvals <= max_key_peak)
+                    & (xvals <= max_line_peak)
+                    & (yvals <= max_line_peak)
                     & (yvals > 0)
                 )
                 npts = int(np.sum(good))
