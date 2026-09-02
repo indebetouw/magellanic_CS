@@ -17,7 +17,8 @@ pl.ion()
 key_line = "13CO10"
 corr_line = "CS21"
 select_good_method = "error"
-snr_threshold = 2
+snr_threshold = 3
+max_key_peak = 100
 table_file = "allstats.ecsv"
 regression_file = f"linefit_logxy_{select_good_method}.ecsv"
 plot_dir = "analyze_dendro_plots"
@@ -282,6 +283,7 @@ def main():
                 np.isfinite(xvals)
                 & np.isfinite(yvals)
                 & (xvals > 0)
+                & (xvals <= max_key_peak)
                 & (yvals > 0)
             )
             all_xvals.append(xvals[finite_positive])
@@ -306,7 +308,13 @@ def main():
                 yerrs = stats[line]["linerms"] / np.sqrt(np.clip(2.35 * channel_fwhm * beam_count, 1e-12, np.inf))
                 peak_threshold = stats[line]["linerms"] / np.sqrt(np.clip(2.35 * np.nanmedian(momentsk[2, :]), 1e-12, np.inf))
 
-                finite_positive = np.isfinite(xvals) & np.isfinite(yvals) & (xvals > 0) & (yvals > 0)
+                finite_positive = (
+                    np.isfinite(xvals)
+                    & np.isfinite(yvals)
+                    & (xvals > 0)
+                    & (xvals <= max_key_peak)
+                    & (yvals > 0)
+                )
                 npts = int(np.sum(finite_positive))
                 if select_good_method == "peak_threshold":
                     high = finite_positive & (yvals > peak_threshold)
@@ -415,6 +423,7 @@ def main():
                 np.isfinite(xvals)
                 & np.isfinite(signal_to_noise)
                 & (xvals > 0)
+                & (xvals <= max_key_peak)
                 & (signal_to_noise > 0)
             )
             pl.plot(
@@ -445,7 +454,13 @@ def main():
                 xvals = stats[key_line]["moments"][0, :]
                 yvals = stats[line]["moments"][0, :]
 
-                good = np.isfinite(xvals) & np.isfinite(yvals) & (xvals > 0) & (yvals > 0)
+                good = (
+                    np.isfinite(xvals)
+                    & np.isfinite(yvals)
+                    & (xvals > 0)
+                    & (xvals <= max_key_peak)
+                    & (yvals > 0)
+                )
                 npts = int(np.sum(good))
                 slope = np.nan
                 offset = np.nan
