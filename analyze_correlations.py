@@ -43,16 +43,36 @@ def cumulative_means(key_line_values, other_line_values, bins):
 
     order = np.argsort(key_line_values)
     key_line_sorted = key_line_values[order]
-    other_line_sorted = other_line_values[order]
     maximum_threshold = key_line_sorted[-min(MINIMUM_THRESHOLD_VOXELS, len(key_line_sorted))]
     thresholds = np.linspace(np.min(key_line_sorted), maximum_threshold, bins)
-    key_line_sums = np.concatenate(([0.0], np.cumsum(key_line_sorted[::-1])))
-    other_line_sums = np.concatenate(([0.0], np.cumsum(other_line_sorted[::-1])))
     first_indices = np.searchsorted(key_line_sorted, thresholds, side="left")
     counts = len(key_line_sorted) - first_indices
+    key_line_sums = np.concatenate(([0.0], np.cumsum(key_line_sorted[::-1])))
     mean_key_line = key_line_sums[counts] / counts
+    other_line_sorted = other_line_values[order]
+    other_line_sums = np.concatenate(([0.0], np.cumsum(other_line_sorted[::-1])))
     mean_other_line = other_line_sums[counts] / counts
     return mean_key_line, mean_other_line, counts, thresholds
+
+
+def cumulative_plan(key_line_values, bins):
+    positive = key_line_values > 0
+    positive_indices = np.flatnonzero(positive)
+    key_line_sorted = key_line_values[positive_indices]
+    order = np.argsort(key_line_sorted)
+    key_line_sorted = key_line_sorted[order]
+    maximum_threshold = key_line_sorted[-min(MINIMUM_THRESHOLD_VOXELS, len(key_line_sorted))]
+    thresholds = np.linspace(np.min(key_line_sorted), maximum_threshold, bins)
+    first_indices = np.searchsorted(key_line_sorted, thresholds, side="left")
+    counts = len(key_line_sorted) - first_indices
+    key_line_sums = np.concatenate(([0.0], np.cumsum(key_line_sorted[::-1])))
+    return positive_indices[order], counts, key_line_sums[counts] / counts
+
+
+def cumulative_means_from_plan(other_line_values, plan):
+    order, counts, mean_key_line = plan
+    other_line_sums = np.concatenate(([0.0], np.cumsum(other_line_values[order][::-1])))
+    return mean_key_line, other_line_sums[counts] / counts
 
 
 def differential_means(key_line_values, other_line_values, bins):
@@ -99,6 +119,47 @@ def differential_means(key_line_values, other_line_values, bins):
     mean_other_line = (other_line_sums[last_indices] - other_line_sums[first_indices]) / counts
     thresholds = key_line_sorted[first_indices]
     return mean_key_line, mean_other_line, counts, thresholds
+
+
+def differential_plan(key_line_values):
+    positive = key_line_values > 0
+    positive_indices = np.flatnonzero(positive)
+    key_line_sorted = key_line_values[positive_indices]
+    order = np.argsort(key_line_sorted)
+    key_line_sorted = key_line_sorted[order]
+    low_brightness_end = np.searchsorted(
+        key_line_sorted, LOW_BRIGHTNESS_THRESHOLD, side="left"
+    )
+    high_brightness_count = len(key_line_sorted) - low_brightness_end
+    full_high_brightness_bins = high_brightness_count // HIGH_BRIGHTNESS_VOXELS_PER_BIN
+    high_brightness_start = len(key_line_sorted) - (
+        full_high_brightness_bins * HIGH_BRIGHTNESS_VOXELS_PER_BIN
+    )
+    low_brightness_edges = np.linspace(
+        0, high_brightness_start, LOW_BRIGHTNESS_BIN_COUNT + 1, dtype=int
+    )
+    high_brightness_edges = np.arange(
+        high_brightness_start,
+        len(key_line_sorted) + 1,
+        HIGH_BRIGHTNESS_VOXELS_PER_BIN,
+        dtype=int,
+    )
+    bin_edges = np.unique(np.concatenate((low_brightness_edges, high_brightness_edges[1:])))
+    first_indices = bin_edges[:-1]
+    last_indices = bin_edges[1:]
+    counts = last_indices - first_indices
+    key_line_sums = np.concatenate(([0.0], np.cumsum(key_line_sorted)))
+    mean_key_line = (key_line_sums[last_indices] - key_line_sums[first_indices]) / counts
+    return positive_indices[order], first_indices, last_indices, counts, mean_key_line
+
+
+def differential_means_from_plan(other_line_values, plan):
+    order, first_indices, last_indices, counts, mean_key_line = plan
+    other_line_sums = np.concatenate(([0.0], np.cumsum(other_line_values[order])))
+    mean_other_line = (
+        other_line_sums[last_indices] - other_line_sums[first_indices]
+    ) / counts
+    return mean_key_line, mean_other_line
 
 
 def noise_per_selected_voxel(other_line_rms, counts, pixels_per_beam):
@@ -184,11 +245,11 @@ def plot_aligned_spectra(
         weighted_spectrum_mean(centered_key_line, weights),
         label=f"{key_line} peak-weighted",
     )
-    axis.plot(centered_channels, spectrum_mean(centered_other_line), label=f"{other_line} unweighted")
+    axis.plot(centered_channels, spectrum_mean(centered_other_line)*5, label=f"{other_line} unweighted (x5)")
     axis.plot(
         centered_channels,
-        weighted_spectrum_mean(centered_other_line, weights),
-        label=f"{other_line} peak-weighted",
+        weighted_spectrum_mean(centered_other_line, weights)*5,
+        label=f"{other_line} peak-weighted (x5)",
     )
     axis.set_xlabel(f"Channel offset from {key_line} moment 1")
     axis.set_ylabel("Mean brightness temperature (K)")
@@ -209,6 +270,7 @@ def plot_cumulative_means(
     other_line_rms,
     pixels_per_beam,
     bins,
+    shuffle_plan,
     output,
 ):
     mean_key_line, mean_other_line, counts, _ = cumulative_means(
@@ -229,10 +291,9 @@ def plot_cumulative_means(
         )
     shuffled_other_line_means = []
     for shuffled_values in shuffled_other_line_values:
-        shuffled_mean_key_line, shuffled_mean_other_line, _, _ = cumulative_means(
-            key_line_values,
+        shuffled_mean_key_line, shuffled_mean_other_line = cumulative_means_from_plan(
             shuffled_values,
-            bins,
+            shuffle_plan,
         )
         shuffled_other_line_means.append(shuffled_mean_other_line)
         axis.plot(
@@ -283,6 +344,7 @@ def plot_differential_means(
     other_line_rms,
     pixels_per_beam,
     bins,
+    shuffle_plan,
     output,
 ):
     mean_key_line, mean_other_line, counts, _ = differential_means(
@@ -303,10 +365,9 @@ def plot_differential_means(
         )
     shuffled_other_line_means = []
     for shuffled_values in shuffled_other_line_values:
-        shuffled_mean_key_line, shuffled_mean_other_line, _, _ = differential_means(
-            key_line_values,
+        shuffled_mean_key_line, shuffled_mean_other_line = differential_means_from_plan(
             shuffled_values,
-            bins,
+            shuffle_plan,
         )
         shuffled_other_line_means.append(shuffled_mean_other_line)
         axis.plot(
@@ -385,6 +446,7 @@ def analyze_cloud(cloud, args, output_directory):
         raise RuntimeError(f"No finite {key_line}/{other_line} voxel pairs found")
 
     _, _, _, thresholds = cumulative_means(key_line_values, other_line_values, args.threshold_bins)
+    cumulative_shuffle_plan = cumulative_plan(key_line_values, args.threshold_bins)
     highest_bin_mask = good & (key_line_data >= thresholds[-1])
     highest_bin_image = np.sum(highest_bin_mask, axis=0)
     plot_aligned_spectra(
@@ -399,6 +461,7 @@ def analyze_cloud(cloud, args, output_directory):
         other_line_values,
         args.threshold_bins,
     )
+    differential_shuffle_plan = differential_plan(key_line_values)
     highest_differential_bin_mask = good & (key_line_data >= differential_thresholds[-1])
     highest_differential_bin_image = np.sum(highest_differential_bin_mask, axis=0)
 
@@ -445,6 +508,7 @@ def analyze_cloud(cloud, args, output_directory):
         other_line_rms,
         pixels_per_beam,
         args.threshold_bins,
+        cumulative_shuffle_plan,
         cumulative_output,
     )
     plot_differential_means(
@@ -456,6 +520,7 @@ def analyze_cloud(cloud, args, output_directory):
         other_line_rms,
         pixels_per_beam,
         args.threshold_bins,
+        differential_shuffle_plan,
         differential_output,
     )
 
