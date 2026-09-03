@@ -7,6 +7,7 @@ import os
 pl.ion()
 
 regression_file = "linefit_logxy_error.ecsv"
+differential_fit_file = "analyze_correlation_plots/differential_mean_fits.csv"
 line_output_file = "peak_intercept_vs_slope_by_line.png"
 cloud_output_file = "peak_intercept_vs_slope_by_cloud.png"
 
@@ -45,7 +46,15 @@ def build_cloud_colors(tab):
     return clouds, colors
 
 
-def plot_intercept_vs_slope(reg, group_key, colors, output_file, title):
+def plot_intercept_vs_slope(
+    reg,
+    group_key,
+    colors,
+    output_file,
+    title,
+    differential_fits,
+    line_colors,
+):
     pl.clf()
     pl.gcf().set_size_inches(7, 6)
 
@@ -120,12 +129,35 @@ def plot_intercept_vs_slope(reg, group_key, colors, output_file, title):
                 label=group,
             )
 
+    for row in differential_fits:
+        slope = float(row["fitted_slope"])
+        slope_uncertainty = float(row["fitted_slope_error"])
+        offset = float(row["fitted_offset"])
+        if not (np.isfinite(slope) and np.isfinite(offset)):
+            continue
+        if slope_uncertainty > 0.1:
+            sym="x"
+            alpha=0.2
+        else:
+            sym="s"
+            alpha=1.0
+        pl.plot(
+            slope,
+            offset,
+            sym,
+            color=line_colors.get(str(row["other_line"])),
+            markersize=8,
+            mfc="none",
+            alpha=alpha,
+            #markeredgewidth=1.8,
+        )
+
     pl.xlabel("Slope")
     pl.ylabel("Intercept")
     pl.title(title)
     pl.grid(alpha=0.2)
     pl.xlim(left=-0.5)
-    pl.ylim(bottom=-3.)
+    pl.ylim(bottom=-2.5)
     pl.legend(prop={"size": 8}, loc="best")
     pl.tight_layout()
     pl.savefig(output_file)
@@ -199,6 +231,13 @@ def main():
     lines, line_colors = build_line_colors(reg)
     clouds, cloud_colors = build_cloud_colors(reg)
 
+    if not os.path.exists(differential_fit_file):
+        raise FileNotFoundError(f"Missing differential fit table: {differential_fit_file}")
+    differential_fits = Table.read(differential_fit_file, format="ascii.csv")
+    required_fit_columns = {"other_line", "fitted_slope", "fitted_offset"}
+    if not required_fit_columns.issubset(set(differential_fits.colnames)):
+        raise RuntimeError("differential_mean_fits.csv is not in the expected format")
+
     print_cs21_slope_correlations(reg)
 
     plot_intercept_vs_slope(
@@ -207,6 +246,8 @@ def main():
         line_colors,
         line_output_file,
         "Peak-fit intercept vs slope colored by line",
+        differential_fits,
+        line_colors,
     )
     plot_intercept_vs_slope(
         reg,
@@ -214,6 +255,8 @@ def main():
         cloud_colors,
         cloud_output_file,
         "Peak-fit intercept vs slope colored by cloud",
+        differential_fits,
+        line_colors,
     )
 
 

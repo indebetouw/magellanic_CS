@@ -5,7 +5,7 @@ from glob import glob
 from pathlib import Path
 
 from astropy.io import fits
-from astropy.table import Table
+from astropy.table import Table, vstack
 from matplotlib.colors import LogNorm
 import matplotlib.pyplot as pl
 import numpy as np
@@ -14,20 +14,22 @@ import numpy as np
 PRODUCT_DIRECTORY = "../products_1pc"
 DEFAULT_CLOUD = "A439"
 key_line = "13CO10"
-other_line = "C18O10"
+other_line = "SO3221"
 OUTPUT_DIRECTORY = "analyze_correlation_plots"
 FIT_TABLE_FILENAME = "differential_mean_fits.csv"
 MINIMUM_THRESHOLD_VOXELS = 1000
 LOW_BRIGHTNESS_THRESHOLD = 0.1
 LOW_BRIGHTNESS_BIN_COUNT = 15
-HIGH_BRIGHTNESS_VOXELS_PER_BIN = 3000
+HIGH_BRIGHTNESS_VOXELS_PER_BIN = 1000
 
 
 def find_cube(cloud, line):
     pattern = f"{PRODUCT_DIRECTORY}/{cloud}_*{line}*4asec_grid_K.fits"
     paths = glob(pattern)
-    if len(paths) != 1:
+    if len(paths) > 1:
         raise RuntimeError(f"Expected one cube matching {pattern}, found {paths}")
+    if len(paths) == 0:
+        return None
     return paths[0]
 
 
@@ -299,14 +301,14 @@ def plot_cumulative_means(
 
     figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
     axis.plot(mean_key_line, mean_other_line, ".-", markersize=4, label=f"Aligned {other_line}")
-    for index in range(len(mean_key_line) - 5, len(mean_key_line)):
-        axis.annotate(
-            f"{counts[index]:,}",
-            (mean_key_line[index], mean_other_line[index]),
-            xytext=(5, 5),
-            textcoords="offset points",
-            fontsize=8,
-        )
+    # for index in range(len(mean_key_line) - 5, len(mean_key_line)):
+    #     axis.annotate(
+    #         f"{counts[index]:,}",
+    #         (mean_key_line[index], mean_other_line[index]),
+    #         xytext=(5, 5),
+    #         textcoords="offset points",
+    #         fontsize=8,
+    #     )
     shuffled_other_line_means = []
     for shuffled_values in shuffled_other_line_values:
         shuffled_mean_key_line, shuffled_mean_other_line = cumulative_means_from_plan(
@@ -394,6 +396,7 @@ def plot_differential_means(
             np.log10(mean_key_line[fit_mask]),
             np.log10(mean_other_line[fit_mask]),
             1,
+            w=mean_other_line[fit_mask],
             cov=True,
         )
         fitted_slope = float(coefficients[0])
@@ -403,14 +406,18 @@ def plot_differential_means(
 
     figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
     axis.plot(mean_key_line, mean_other_line, ".-", markersize=4, label=f"Aligned {other_line}")
-    for index in range(len(mean_key_line) - 5, len(mean_key_line)):
-        axis.annotate(
-            f"{counts[index]:,}",
-            (mean_key_line[index], mean_other_line[index]),
-            xytext=(5, 5),
-            textcoords="offset points",
-            fontsize=8,
-        )
+    myplot,=axis.plot(mean_key_line[fit_mask], mean_other_line[fit_mask], ".", markersize=4)
+    xx = mean_key_line[fit_mask]
+    pl.plot(xx, 10**(fitted_slope * np.log10(xx) + fitted_offset), "--",color=myplot.get_color())
+
+    # for index in range(len(mean_key_line) - 5, len(mean_key_line)):
+    #     axis.annotate(
+    #         f"{counts[index]:,}",
+    #         (mean_key_line[index], mean_other_line[index]),
+    #         xytext=(5, 5),
+    #         textcoords="offset points",
+    #         fontsize=8,
+    #     )
     shuffled_other_line_means = []
     for shuffled_values in shuffled_other_line_values:
         shuffled_mean_key_line, shuffled_mean_other_line = differential_means_from_plan(
@@ -487,6 +494,9 @@ def analyze_cloud(cloud, args, output_directory):
 
     key_line_file = find_cube(cloud, key_line)
     other_line_file = find_cube(cloud, other_line)
+    if not other_line_file:
+        print(f"ERROR: No cube found for {cloud} {other_line}")
+        return (None, None, None, None, None, None, None, None)
     key_line_data = fits.getdata(key_line_file, memmap=True)
     other_line_data = fits.getdata(other_line_file, memmap=True)
     other_line_header = fits.getheader(other_line_file)
@@ -496,8 +506,6 @@ def analyze_cloud(cloud, args, output_directory):
             f"Cube shape mismatch: {key_line_data.shape} versus {other_line_data.shape}"
         )
 
-    other_line_noise_channels = np.concatenate((other_line_data[:5], other_line_data[-5:]))
-    other_line_rms = np.sqrt(np.nanmean(other_line_noise_channels**2))
     pixels_per_beam = (
         other_line_header["BMAJ"]
         * other_line_header["BMIN"]
@@ -506,13 +514,27 @@ def analyze_cloud(cloud, args, output_directory):
         / (4 * np.log(2))
     )
 
+    # Trim all-NaN channels before building the spatial mask.
+    non_nan_channels = np.where(np.any(np.isfinite(other_line_data), axis=(1, 2)))[0]
+    if len(non_nan_channels) == 0:
+        print(f"ERROR: No finite {other_line} channels found for {cloud}")
+        return (None, None, None, None, None, None, None, None)
+
+    key_line_data = key_line_data[non_nan_channels]
+    other_line_data = other_line_data[non_nan_channels]
+    other_line_noise_channels = np.concatenate((other_line_data[:5], other_line_data[-5:]))
+    other_line_rms = np.sqrt(np.nanmean(other_line_noise_channels**2))
+
+    # Every retained channel must be finite so channel shuffling preserves validity.
     other_line_valid_spatial_pixels = np.all(np.isfinite(other_line_data), axis=0)
+
     good = np.isfinite(key_line_data) & other_line_valid_spatial_pixels
     key_line_values = key_line_data[good]
     other_line_values = other_line_data[good]
     if len(key_line_values) == 0:
-        raise RuntimeError(f"No finite {key_line}/{other_line} voxel pairs found")
-
+        print(f"ERROR: No finite {key_line}/{other_line} voxel pairs found")
+        return (None, None, None, None, None, None, None, None)
+    
     _, _, _, thresholds = cumulative_means(key_line_values, other_line_values, args.threshold_bins)
     cumulative_shuffle_plan = cumulative_plan(key_line_values, args.threshold_bins)
     highest_bin_mask = good & (key_line_data >= thresholds[-1])
@@ -533,22 +555,25 @@ def analyze_cloud(cloud, args, output_directory):
     highest_differential_bin_mask = good & (key_line_data >= differential_thresholds[-1])
     highest_differential_bin_image = np.sum(highest_differential_bin_mask, axis=0)
 
+    # since good's indices are in a cube that's already been truncated for non-NaN channels, 
+    # channel_indices are relative to the truncated cube of non-NaN channels
     channel_indices, y_indices, x_indices = np.nonzero(good)
     random_generator = np.random.default_rng(args.shuffle_seed)
     shuffled_other_line_values = []
     for realization in range(args.shuffle_realizations):
-        shuffled_channel_indices = random_generator.permutation(
-            other_line_data.shape[0]
-        )
+        shuffled_channel_indices = random_generator.permutation(non_nan_channels.shape[0])
+        # shuffled_channel_indices=np.concatenate([range(non_nan_channels.min()), 
+        #                                          shuffled_channel_indices,
+        #                                          range(non_nan_channels.max()+1,key_line_data.shape[0])]).astype(int, copy=False)
+        # channel_indices_minmax = (shuffled_channel_indices.min(), shuffled_channel_indices.max())
         shuffled_values = other_line_data[
             shuffled_channel_indices[channel_indices],
             y_indices,
             x_indices,
         ]
         if not np.all(np.isfinite(shuffled_values)):
-            raise RuntimeError(
-                f"Shuffled {other_line} realization {realization + 1} has non-finite selected pixels"
-            )
+            #raise RuntimeError()
+            print(f"Shuffled {other_line} realization {realization + 1} has non-finite selected pixels")
         shuffled_other_line_values.append(shuffled_values)
 
     figure, axis = pl.subplots(figsize=(6, 5), constrained_layout=True)
@@ -626,6 +651,21 @@ def main():
     clouds = args.cloud or find_clouds()
     if not clouds:
         raise RuntimeError(f"No {key_line} cubes found in {PRODUCT_DIRECTORY}")
+    fit_table_path = output_directory / FIT_TABLE_FILENAME
+    existing_fit_table = None
+    fit_dtypes = None
+    if fit_table_path.exists():
+        existing_fit_table = Table.read(fit_table_path, format="ascii.csv")
+        fit_dtypes = [existing_fit_table[name].dtype for name in (
+            "cloud",
+            "key_line",
+            "other_line",
+            "fitted_slope",
+            "threshold_value",
+            "fitted_offset",
+            "fitted_slope_error",
+            "fitted_offset_error",
+        )]
     fit_rows = [analyze_cloud(cloud, args, output_directory) for cloud in clouds]
     fit_table = Table(
         rows=fit_rows,
@@ -639,8 +679,20 @@ def main():
             "fitted_slope_error",
             "fitted_offset_error",
         ),
+        dtype=fit_dtypes,
     )
-    fit_table.write(output_directory / FIT_TABLE_FILENAME, format="ascii.csv", overwrite=True)
+    if existing_fit_table is not None:
+        current_fit_keys = {
+            (str(row["cloud"]), str(row["key_line"]), str(row["other_line"]))
+            for row in fit_table
+        }
+        keep_existing = [
+            (str(row["cloud"]), str(row["key_line"]), str(row["other_line"]))
+            not in current_fit_keys
+            for row in existing_fit_table
+        ]
+        fit_table = vstack([existing_fit_table[keep_existing], fit_table])
+    fit_table.write(fit_table_path, format="ascii.csv", overwrite=True)
 
 
 if __name__ == "__main__":
