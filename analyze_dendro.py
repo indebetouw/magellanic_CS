@@ -3,6 +3,19 @@
 The script reads the flat ``allstats.ecsv`` table, creates per-cloud diagnostic
 plots, fits log-space line relations, and writes the fit summary to
 ``linefit_logxy.ecsv``.
+
+First, we plot different ways of getting the peak intensity:
+{cloud}_peak_vs_mom0_over_mom2_log.png
+all lines overplotted
+
+then different ways of selecting which points are "good" (above brightness floor, or above cloud-by-cloud SN threshold)
+{cloud}_pk_different_lines_{select_good_method}.png
+and mom0_different_lines_error
+see other lines as a function of 13co
+
+then snr of other lines vs peak of 13co
+cloud + "_pk_vs_snr.png"
+
 """
 
 from astropy.io import fits

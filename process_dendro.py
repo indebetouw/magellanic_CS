@@ -3,6 +3,37 @@
 The script pairs 13CO(1-0) dendrogram files with available line cubes, measures
 moments and Gaussian-fit peak properties for each structure, and stores the
 results in the flat ``allstats.ecsv`` table.
+
+cloud
+line
+linefile
+cuberms = linerms = rms in edge channels (-5) of cube
+chanwid_kms
+pixperbm
+dendro_idx
+npix_2d =  pixels in 2d mask
+  spectrum = nansum spectrum in mask
+  areaspectrum = pixels in each channel of 3d mask
+  pk[:,0] = max(1dspectrum) / areaspectrum at the peak chan  = "1darea"
+  pk[:,1] = max(1dspectrum) / 2d area of mask union of all chans = "2darea"
+pk_1darea
+pk_2darea
+pk_from_mom_1darea = mom0/mom2/sqrt(2pi) / area at peak chan
+pk_from_mom_2darea
+  fit p[0] exp( -0.5 ((x-p[1])/p[2])**2 )
+fit_amp = p[0]
+fit_b = reserved for fitting with a constant background, not used
+fit_v0 = p[1]
+fit_vsig = p[2]
+delta_amp = err from fit of p[0]
+delta_v0
+delta_vsig
+pk_from_fit_1darea 
+pk_from_fit_2darea
+mom0
+mom1
+mom2
+
 """
 
 from astrodendro import Dendrogram

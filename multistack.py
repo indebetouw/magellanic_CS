@@ -1,19 +1,22 @@
 from astropy.io import fits
 from astropy.stats import sigma_clip
+from astropy.wcs import WCS
 import numpy as np
 import matplotlib.pyplot as pl
 from glob import glob
 pl.ion()
 
+# this stacks spectra of faint lines in bins of peak intensity of a baseline line
 
 baseline = '13CO10'
-faintline = 'C18O10'
-cloud = 'N159W'
-nbin=3
-evenbinsize = True
-velshift = False
+faintlines = ['C18O10','CS21']
+faintlines = ['C18O10']
+cloud = 'GMC104'
+nbin=4
+evenbinsize = False # put same # pixels in each bin, approximately
+velshift = True
 median_spectra = False
-nsigma = 2
+nsigma = 2 # cutoff below which we ignore values in the base line
 
 if median_spectra:
     stack_function = np.nanmedian
@@ -24,20 +27,22 @@ else:
 
 ddir = "../products_1pc/"
 base_files = glob(f"{ddir}/{cloud}_{baseline}_*.fits")
-faint_files = glob(f"{ddir}/{cloud}_{faintline}_*.fits")
 
 if len(base_files) == 0:
     raise FileNotFoundError(f"No base files found for {cloud} {baseline}")
 elif len(base_files) > 1:
     raise FileExistsError(f"Multiple base files found for {cloud} {baseline}")
 
-if len(faint_files) == 0:
-    raise FileNotFoundError(f"No faint files found for {cloud} {faintline}")
-elif len(faint_files) > 1:
-    raise FileExistsError(f"Multiple faint files found for {cloud} {faintline}")
+faint_hdus = []
+for faintline in faintlines:
+    faint_files = glob(f"{ddir}/{cloud}_{faintline}_*.fits")
+    if len(faint_files) == 0:
+        raise FileNotFoundError(f"No faint files found for {cloud} {faintline}")
+    elif len(faint_files) > 1:
+        raise FileExistsError(f"Multiple faint files found for {cloud} {faintline}")
+    faint_hdus.append(fits.open(faint_files[0])[0])
 
 base_hdu = fits.open(base_files[0])[0]
-faint_hdu = fits.open(faint_files[0])[0]
 
 peak_base = np.nanmax(base_hdu.data,axis=0)
 
@@ -49,6 +54,22 @@ def velocity_axis(cube_hdu):
     )
     restfreq = cube_hdu.header["RESTFRQ"]
     return (restfreq - frequency) / restfreq * 299792.458
+
+
+def hanning_smooth(spectrum):
+    # classic radio-astronomy 3-tap Hanning smooth: weights 0.25, 0.5, 0.25
+    window = np.hanning(5)[1:-1]
+    window = window / window.sum()
+    padded = np.pad(spectrum, 1, mode="edge")
+    return np.convolve(padded, window, mode="valid")
+
+
+def hanning_smooth_wide(spectrum):
+    # wider 5-tap Hanning smooth for heavier smoothing
+    window = np.hanning(7)[1:-1]
+    window = window / window.sum()
+    padded = np.pad(spectrum, 2, mode="edge")
+    return np.convolve(padded, window, mode="valid")
 
 finite_peak_values = peak_base[np.isfinite(peak_base)]
 clipped_peak_values = sigma_clip(finite_peak_values, sigma=3, maxiters=3).compressed()
@@ -108,11 +129,16 @@ base_peak_velocity[finite_peak] = base_velocity[
     np.nanargmax(base_hdu.data[:, finite_peak], axis=0)
 ]
 
-fig, axes = pl.subplots(2, 1, sharex=False)
-for panel_index, (axis, (line, cube_hdu)) in enumerate(zip(
-    axes,
-    [(baseline, base_hdu), (faintline, faint_hdu)],
-)):
+pl.rcParams["axes.labelsize"] = 8
+pl.rcParams["xtick.labelsize"] = 7
+pl.rcParams["ytick.labelsize"] = 7
+
+fig, axes = pl.subplots(2, 2, sharex=False)
+spectra_axes = {baseline: axes[0, 0], faintlines[0]: axes[1, 0]}
+lines_info = [(baseline, base_hdu)] + list(zip(faintlines, faint_hdus))
+stacked_peak_intensity = {line: np.full(nbin, np.nan) for line, _ in lines_info}
+
+for panel_index, (line, cube_hdu) in enumerate(lines_info):
     velocity = velocity_axis(cube_hdu)
     if velshift:
         velocity_plot = velocity - np.nanmedian(base_peak_velocity[finite_peak])
@@ -144,27 +170,60 @@ for panel_index, (axis, (line, cube_hdu)) in enumerate(zip(
         else:
             stacked_spectra[ibin] = stack_function(cube_hdu.data[:, bin_mask], axis=1)
 
+    axis = spectra_axes.get(line)
     for ibin in valid_bins[::-1]:
-        axis.plot(
-            velocity_plot,
-            stacked_spectra[ibin],
-            color=line_colors[ibin],
-            label=f"{mean_peak_intensity[ibin]:.2f} K",
-        )
-    axis.set_ylabel(f"{stack_name} {line} intensity (K)")
-    if panel_index == 0:
-        axis.legend(title="Mean peak",prop={"size": 8})
-if velshift:
-    axes[-1].set_xlabel("Velocity offset (km/s)")
-else:
-    axes[-1].set_xlabel("Velocity (km/s)")
+        if np.nanmax(stacked_spectra[ibin]) < 1:
+            stacked_spectra[ibin] = hanning_smooth_wide(stacked_spectra[ibin])
+        stacked_peak_intensity[line][ibin] = np.nanmax(stacked_spectra[ibin])
+        if axis is not None:
+            axis.plot(
+                velocity_plot,
+                stacked_spectra[ibin],
+                color=line_colors[ibin],
+                label=f"{mean_peak_intensity[ibin]:.2f} K",
+            )
+    if axis is not None:
+        axis.set_ylabel(f"{stack_name} {line} (K)")
+        if panel_index == 0:
+            if velshift:
+                axis.set_title(f"{cloud} shifted and stacked spectra")
+            else:
+                axis.set_title(f"{cloud} stacked spectra")
+            axis.legend(title="Mean peak",prop={"size": 8})
+bottom_xlabel = "Velocity offset (km/s)" if velshift else "Velocity (km/s)"
+axes[1, 0].set_xlabel(bottom_xlabel)
 #pl.yscale("log")
 #pl.ylim(peak_rms/5, None)
+
+for faintline in faintlines:
+    axes[1, 1].plot(
+        stacked_peak_intensity[baseline][valid_bins],
+        stacked_peak_intensity[faintline][valid_bins],
+        "o-",
+        label=faintline,
+    )
+axes[1, 1].set_xlabel(f"{stack_name} {baseline} peak (K)")
+axes[1, 1].set_ylabel(f"{stack_name} faint line peak (K)")
+axes[1, 1].legend(fontsize=8)
+
+
+celestial_wcs = WCS(base_hdu.header).celestial
+axes[0, 1].remove()
+velocity_map_axis = pl.subplot(2, 2, 2, projection=celestial_wcs)
+velocity_map_axis.imshow(base_peak_velocity, origin="lower", cmap="jet")
+velocity_map_axis.set_xlabel("RA")
+velocity_map_axis.set_ylabel("Dec")
+pl.colorbar(velocity_map_axis.imshow(base_peak_velocity, origin="lower", cmap="jet"), ax=velocity_map_axis,label="km/s")
+
+
+
 filename = f"{cloud}_{stack_name.lower()}_spectra"
 if median_spectra:
     filename+= "_median"
 else:
     filename+= "_mean"
+if evenbinsize:
+    filename += "_evenpixperbin"
 if velshift:
     pl.savefig(f"{filename}_velshift.png")
 else:
